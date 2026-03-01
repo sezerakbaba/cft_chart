@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="CFT Cetveli">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>KONYA VKE CFT Hesaplama Cetveli</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=IBM+Plex+Mono:wght@400;700&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width:100%; height:100%; overflow-x:hidden; touch-action:manipulation; }
+
+  body {
+    background: #fafafa;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 22px 8px 24px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  h1 {
+    font-family: 'Playfair Display', serif;
+    font-weight: 400;
+    font-size: clamp(1.1rem, 4vw, 1.8rem);
+    letter-spacing: 0.04em;
+    text-align: center;
+    margin-bottom: 18px;
+    color: #111;
+    line-height: 1.35;
+  }
+  h1 span { font-weight: 700; }
+
+  .wheel-container {
+    position: relative;
+    user-select: none;
+    touch-action: none;
+    flex-shrink: 0;
+    border-radius: 50%;
+    box-shadow: 0 2px 24px rgba(0,0,0,0.07), 0 0 0 1px rgba(0,0,0,0.06);
+  }
+
+  canvas { position:absolute; top:0; left:0; touch-action:none; border-radius:50%; }
+  #bgCanvas     { z-index:1; }
+  #outerRing    { z-index:2; cursor:grab; }
+  #outerRing:active  { cursor:grabbing; }
+  #middleRing   { z-index:3; cursor:grab; }
+  #middleRing:active { cursor:grabbing; }
+  #centerCanvas { z-index:4; pointer-events:none; }
+</style>
+</head>
+<body>
+
+<h1><span>KONYA VKE</span><br>CFT Hesaplama Cetveli</h1>
+
+<div class="wheel-container" id="wheelContainer">
+  <canvas id="bgCanvas"></canvas>
+  <canvas id="outerRing"></canvas>
+  <canvas id="middleRing"></canvas>
+  <canvas id="centerCanvas"></canvas>
+</div>
+
+<script>
+function calcSize() {
+  return Math.max(280, Math.min(window.innerWidth - 16, window.innerHeight - 130));
+}
+let SIZE = calcSize();
+const DPR = Math.min(window.devicePixelRatio || 1, 3);
+let cx, cy;
+
+function initCanvases() {
+  SIZE = calcSize(); cx = SIZE/2; cy = SIZE/2;
+  ['bgCanvas','outerRing','middleRing','centerCanvas'].forEach(id => {
+    const c = document.getElementById(id);
+    c.width = SIZE*DPR; c.height = SIZE*DPR;
+    c.style.width = SIZE+'px'; c.style.height = SIZE+'px';
+    const ctx = c.getContext('2d');
+    ctx.setTransform(1,0,0,1,0,0); ctx.scale(DPR,DPR);
+  });
+  document.getElementById('wheelContainer').style.width  = SIZE+'px';
+  document.getElementById('wheelContainer').style.height = SIZE+'px';
+}
+initCanvases();
+
+const sensEML = [
+  9.3,11.1,13.1,15.6,18.6,22.1,26.3,31.25,37.2,44.2,
+  52.6,62.5,74.3,88.4,105,125,148.7,176.8,210.2,250,
+  297.3,353,420,500,595,707,841,1000,1188,
+  1414,1682,2000,2378,2828,3364,4000,4757,5657,6728,8000
+];
+const titers = ['1:5','1:10','1:20','1:40','1:80','1:160','1:320','1:640','1:1280','1:2560'];
+const titerReactions = [];
+titers.forEach(titer => {
+  ['+','++','+++','++++'].forEach((reaction,ri) => {
+    titerReactions.push({label:titer+' '+reaction, titer, reaction, isFirst:ri===0});
+  });
+});
+
+const idx320pp = titerReactions.findIndex(x => x.label==='1:320 ++');
+let outerAngle  = 0;
+let middleAngle = -(idx320pp/titerReactions.length)*Math.PI*2;
+
+function pc(r,a){ return [cx+r*Math.cos(a), cy+r*Math.sin(a)]; }
+
+function drawVertText(ctx, text, r, angle, fs, color, bold, bg) {
+  ctx.save();
+  ctx.translate(cx+r*Math.cos(angle), cy+r*Math.sin(angle));
+  ctx.rotate(angle);
+  ctx.font=(bold?'700 ':'400 ')+fs+'px "IBM Plex Mono",monospace';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  if(bg){
+    const m=ctx.measureText(text);
+    ctx.fillStyle=bg;
+    ctx.beginPath(); ctx.rect(-m.width/2-3,-fs/2-2,m.width+6,fs+4); ctx.fill();
+  }
+  ctx.fillStyle=color; ctx.fillText(text,0,0);
+  ctx.restore();
+}
+
+// ---- ARKA PLAN ----
+function drawBg() {
+  const ctx = document.getElementById('bgCanvas').getContext('2d');
+  ctx.clearRect(0,0,SIZE,SIZE);
+
+  // Ana daire — beyaz
+  ctx.beginPath(); ctx.arc(cx,cy,SIZE/2-1,0,Math.PI*2);
+  ctx.fillStyle='#f5f5f5'; ctx.fill();
+
+  // Dış halka zemin — çok hafif gri
+  ctx.beginPath();
+  ctx.arc(cx,cy,SIZE/2-2,0,Math.PI*2);
+  ctx.arc(cx,cy,SIZE*0.39,0,Math.PI*2,true);
+  ctx.fillStyle='#ffffff'; ctx.fill();
+
+  // İç halka zemin — beyaz
+  ctx.beginPath();
+  ctx.arc(cx,cy,SIZE*0.39,0,Math.PI*2);
+  ctx.arc(cx,cy,SIZE*0.10,0,Math.PI*2,true);
+  ctx.fillStyle='#ffffff'; ctx.fill();
+
+  // Sınır çizgileri — ince siyah
+  [SIZE/2-2, SIZE*0.39, SIZE*0.10].forEach((r,i) => {
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.strokeStyle = i===0 ? '#111' : '#ccc';
+    ctx.lineWidth   = i===0 ? 1.5 : 1;
+    ctx.stroke();
+  });
+
+  // Gösterge oku — minimal üçgen
+  const tipY = cy-SIZE/2+3;
+  ctx.beginPath();
+  ctx.moveTo(cx,tipY+22); ctx.lineTo(cx-9,tipY); ctx.lineTo(cx+9,tipY);
+  ctx.closePath();
+  ctx.fillStyle='#111'; ctx.fill();
+
+  // Kesik çizgi
+  ctx.beginPath();
+  ctx.moveTo(cx,tipY+22); ctx.lineTo(cx,cy-SIZE*0.33);
+  ctx.strokeStyle='rgba(0,0,0,0.12)'; ctx.lineWidth=1;
+  ctx.setLineDash([4,4]); ctx.stroke(); ctx.setLineDash([]);
+}
+
+// ---- DIŞ HALKA ----
+function drawOuter(angle) {
+  const ctx = document.getElementById('outerRing').getContext('2d');
+  ctx.clearRect(0,0,SIZE,SIZE);
+
+  const outerR = SIZE/2-4;
+  const innerR = SIZE*0.39;
+  const midR   = (outerR+innerR)/2;
+  const n = sensEML.length;
+  const fs = Math.max(9, Math.round(SIZE*0.030));
+
+  for(let i=0;i<n;i++){
+    const a   = angle+(i/n)*Math.PI*2-Math.PI/2;
+    const val = sensEML[i];
+    const is1000 = val===1000;
+    const big    = val>=1000||val<15;
+
+    // Tick
+    const tLen = is1000?22:big?14:8;
+    const [x1,y1]=pc(innerR+1,a); const [x2,y2]=pc(innerR+tLen,a);
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
+    ctx.strokeStyle = is1000?'#c00':'#999';
+    ctx.lineWidth   = is1000?2:big?1.5:0.8;
+    ctx.stroke();
+
+    // 1000 işareti
+    if(is1000){
+      ctx.beginPath(); ctx.arc(cx,cy,innerR+tLen+4,a-0.04,a+0.04);
+      ctx.strokeStyle='#c00'; ctx.lineWidth=2; ctx.stroke();
+    }
+
+    const col = is1000?'#c00':'#111';
+    const bg  = is1000?'#fff0f0':'#f5f5f5';
+    drawVertText(ctx,String(val),midR,a,fs,col,is1000,bg);
+  }
+}
+
+// ---- İÇ HALKA ----
+function drawMiddle(angle) {
+  const ctx = document.getElementById('middleRing').getContext('2d');
+  ctx.clearRect(0,0,SIZE,SIZE);
+
+  const outerR = SIZE*0.385;
+  const innerR = SIZE*0.10;
+  const n      = titerReactions.length;
+  const midR   = (outerR+innerR)/2;
+  const fs     = Math.max(7,Math.round(SIZE*0.026));
+
+  for(let i=0;i<n;i++){
+    const a    = angle+(i/n)*Math.PI*2-Math.PI/2;
+    const aNxt = angle+((i+1)/n)*Math.PI*2-Math.PI/2;
+    const aMid = (a+aNxt)/2;
+    const item = titerReactions[i];
+
+    // Bölme çizgisi
+    const [x1,y1]=pc(innerR,a); const [x2,y2]=pc(outerR,a);
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
+    ctx.strokeStyle = item.isFirst?'#555':'#bbb';
+    ctx.lineWidth   = item.isFirst?1.8:1;
+    ctx.stroke();
+
+    // Etiket
+    ctx.save();
+    ctx.translate(cx+midR*Math.cos(aMid), cy+midR*Math.sin(aMid));
+    ctx.rotate(aMid);
+    ctx.font='700 '+fs+'px "IBM Plex Mono",monospace';
+    ctx.textBaseline='middle';
+
+    const titreStr=item.titer;
+    const reactStr=' '+item.reaction;
+    const tW=ctx.measureText(titreStr).width;
+    const rW=ctx.measureText(reactStr).width;
+    const totalW=tW+rW;
+
+    // "1:5" → "1" + ":" + "5" şeklinde böl, : merkeze hizalı
+    const colonIdx = titreStr.indexOf(':');
+    const beforeColon = titreStr.slice(0, colonIdx);   // "1"
+    const colon       = ':';
+    const afterColon  = titreStr.slice(colonIdx+1);    // "5", "10" vs
+
+    const wBefore = ctx.measureText(beforeColon).width;
+    const wColon  = ctx.measureText(colon).width;
+    const wAfter  = ctx.measureText(afterColon).width;
+    const wReact  = ctx.measureText(reactStr).width;
+
+    // : işaretinin merkezi = x:0
+    // beforeColon sağa hizalı → bitiş noktası: -wColon/2
+    // colon merkezi: 0
+    // afterColon sol hizalı başlangıç: wColon/2
+    // reactStr sol hizalı başlangıç: wColon/2 + wAfter + gap
+
+    const colonX = -wColon/2;
+    const gap2 = 2;
+
+    ctx.textAlign='right';
+    ctx.fillStyle='#111';
+    ctx.fillText(beforeColon, colonX, 0);
+
+    ctx.textAlign='left';
+    ctx.fillText(colon, colonX, 0);
+    ctx.fillText(afterColon, colonX+wColon, 0);
+
+    ctx.fillStyle='#c00';
+    ctx.fillText(reactStr, colonX+wColon+wAfter+gap2, 0);
+
+    ctx.restore();
+  }
+
+  // Sınır çizgileri
+  [SIZE*0.385,SIZE*0.10].forEach(r => {
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.strokeStyle='#ccc'; ctx.lineWidth=1; ctx.stroke();
+  });
+}
+
+// ---- MERKEZ ----
+function drawCenter() {
+  const ctx = document.getElementById('centerCanvas').getContext('2d');
+  ctx.clearRect(0,0,SIZE,SIZE);
+  const r = SIZE*0.10;
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+  ctx.fillStyle='#fff'; ctx.fill();
+  ctx.strokeStyle='#ccc'; ctx.lineWidth=1; ctx.stroke();
+}
+
+function drawAll() {
+  drawBg(); drawOuter(outerAngle); drawMiddle(middleAngle); drawCenter();
+}
+
+function setupDrag(id,rMin,rMax,cb){
+  const c=document.getElementById(id);
+  let on=false,last=0;
+  function xy(e){const t=e.touches?e.touches[0]:e;return[t.clientX,t.clientY];}
+  function ang(e){const[ex,ey]=xy(e),rc=c.getBoundingClientRect();return Math.atan2(ey-rc.top-cy,ex-rc.left-cx);}
+  function hit(e){const[ex,ey]=xy(e),rc=c.getBoundingClientRect(),d=Math.hypot(ex-rc.left-cx,ey-rc.top-cy);return d>=rMin&&d<=rMax;}
+  function dn(e){if(!hit(e))return;on=true;last=ang(e);if(e.cancelable)e.preventDefault();}
+  function mv(e){if(!on)return;const a=ang(e);let d=a-last;if(d>Math.PI)d-=Math.PI*2;if(d<-Math.PI)d+=Math.PI*2;last=a;cb(d);drawAll();if(e.cancelable)e.preventDefault();}
+  function up(){on=false;}
+  c.addEventListener('mousedown',dn);
+  c.addEventListener('touchstart',dn,{passive:false});
+  window.addEventListener('mousemove',mv);
+  window.addEventListener('touchmove',mv,{passive:false});
+  window.addEventListener('mouseup',up);
+  window.addEventListener('touchend',up);
+}
+
+setupDrag('outerRing', SIZE*0.35,SIZE/2,    d=>outerAngle+=d);
+setupDrag('middleRing',SIZE*0.09,SIZE*0.39, d=>middleAngle+=d);
+
+let rt;
+window.addEventListener('resize',()=>{
+  clearTimeout(rt);
+  rt=setTimeout(()=>{
+    initCanvases();
+    setupDrag('outerRing', SIZE*0.35,SIZE/2,    d=>outerAngle+=d);
+    setupDrag('middleRing',SIZE*0.09,SIZE*0.39, d=>middleAngle+=d);
+    drawAll();
+  },150);
+});
+
+drawAll();
+</script>
+<script>
+if('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(r => console.log('SW kayıtlı:', r.scope))
+      .catch(e => console.log('SW hata:', e));
+  });
+}
+</script>
+</body>
+</html>
